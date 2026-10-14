@@ -1,10 +1,10 @@
 name: Trigger Release
 
 # Release flow:
-# - Run this workflow manually from the private repository.
-# - It calculates the next git-cliff version.
-# - It updates pyproject.toml, pushes the version bump commit, and pushes a tag.
-# - The tag push triggers CI, which builds and publishes the release to PyPI.
+# - Run this workflow on internal main to commit the version and create its tag.
+# - Internal CI tests, builds and publishes to Artifactory.
+# - Main commits still sync publicly; release tags do not.
+# - Run sync-release-tag.yml manually to start public CI and PyPI publishing.
 
 on:
   workflow_dispatch:
@@ -12,10 +12,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: trigger-release
+  cancel-in-progress: false
+
 jobs:
   tag-new-release:
     name: Tag new release
-    if: github.repository_owner != 'arm'
+    if: github.repository_owner != 'arm' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: getsentry/action-github-app-token@d4b5da6c5e37703f8c3b3e43abb5705b46e159cc # v3.0.0
@@ -29,6 +33,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.get_app_token.outputs.token }}
+          persist-credentials: false
 
       - name: Set git config
         run: |
@@ -70,16 +75,20 @@ jobs:
 
       - name: Update pyproject version
         env:
+          APP_TOKEN: ${{ steps.get_app_token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
           VERSION: ${{ steps.strip-v-from-version-tag.outputs.version }}
         run: |
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" pyproject.toml
           git add pyproject.toml
           git commit -m "Update pyproject version to v$VERSION"
-          git push
+          git push "https://x-access-token:${APP_TOKEN}@github.com/${REPOSITORY}.git" HEAD:main
 
       - name: Tag new release
         env:
+          APP_TOKEN: ${{ steps.get_app_token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
           VERSION: ${{ steps.git-cliff.outputs.version }}
         run: |
           git tag "$VERSION"
-          git push origin tag "$VERSION"
+          git push "https://x-access-token:${APP_TOKEN}@github.com/${REPOSITORY}.git" "refs/tags/$VERSION"

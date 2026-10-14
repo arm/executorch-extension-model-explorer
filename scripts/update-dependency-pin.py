@@ -2,88 +2,90 @@
 # SPDX-FileCopyrightText: Copyright 2026 Arm Limited and/or its affiliates <open-source-office@arm.com>
 # SPDX-License-Identifier: Apache-2.0
 
-"""Update one adapter package dependency lower bound in pyproject.toml."""
+"""Raise an adapter dependency lower bound without discarding other constraints."""
 
 import argparse
 from pathlib import Path
 
-DEPENDENCY_ALIASES = {
-    "pte-adapter-model-explorer": "pte-adapter-model-explorer",
-    "etrecord-adapter-model-explorer": "etrecord-adapter-model-explorer",
-    "etdump-data-provider-model-explorer": "etdump-data-provider-model-explorer",
-}
+import tomlkit
+from packaging.requirements import Requirement
+from packaging.specifiers import SpecifierSet
+from packaging.utils import canonicalize_name
+from packaging.version import InvalidVersion, Version
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Update a package lower bound in pyproject.toml"
-    )
-    parser.add_argument(
-        "dependency",
-        choices=sorted(DEPENDENCY_ALIASES),
-        help="Dependency package name to update",
-    )
-    parser.add_argument(
-        "version",
-        help="Version or release tag to use as the lower bound, for example 0.1.0 or v0.1.0",
-    )
-    parser.add_argument(
-        "--pyproject",
-        type=Path,
-        default=Path("pyproject.toml"),
-        help="Path to pyproject.toml",
-    )
-    return parser.parse_args()
+DEPENDENCIES = (
+    "pte-adapter-model-explorer",
+    "etrecord-adapter-model-explorer",
+    "etdump-data-provider-model-explorer",
+)
 
 
 def normalize_version(version: str) -> str:
-    version = version.strip()
-    if version.startswith("refs/tags/"):
-        version = version.removeprefix("refs/tags/")
-    return version.removeprefix("v")
-
-
-def update_dependency(pyproject: Path, dependency: str, version: str) -> None:
-    package = DEPENDENCY_ALIASES[dependency]
-    replacement = f'  "{package}>={normalize_version(version)}",'
-
-    lines = pyproject.read_text(encoding="utf-8").splitlines()
-    in_project = False
-    in_dependencies = False
-    updated = False
-
-    for index, line in enumerate(lines):
-        stripped = line.strip()
-
-        if stripped.startswith("[") and stripped.endswith("]"):
-            in_project = stripped == "[project]"
-            in_dependencies = False
-            continue
-
-        if in_project and stripped == "dependencies = [":
-            in_dependencies = True
-            continue
-
-        if in_dependencies and stripped == "]":
-            in_dependencies = False
-            continue
-
-        if in_dependencies and stripped.startswith(f'"{package}'):
-            lines[index] = replacement
-            updated = True
-            break
-
-    if not updated:
-        raise SystemExit(
-            f"Dependency not found in [project].dependencies: {package}"
+    version = version.strip().removeprefix("refs/tags/").removeprefix("v")
+    try:
+        parsed = Version(version)
+    except InvalidVersion as exc:
+        raise ValueError(
+            "Expected a package version such as v0.1.2 or v0.1.2rc1"
+        ) from exc
+    if len(parsed.release) != 3 or parsed.local is not None or parsed.epoch:
+        raise ValueError(
+            "Expected a package version without a local suffix or epoch"
         )
+    return str(parsed)
 
-    pyproject.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+def update_dependency(pyproject: Path, dependency: str, version: str) -> bool:
+    if dependency not in DEPENDENCIES:
+        raise ValueError(f"Unsupported dependency: {dependency}")
+    version = normalize_version(version)
+    incoming = Version(version)
+    document = tomlkit.parse(pyproject.read_text(encoding="utf-8"))
+    requirements = document["project"]["dependencies"]
+    for index, value in enumerate(requirements):
+        requirement = Requirement(str(value))
+        if canonicalize_name(requirement.name) != dependency:
+            continue
+        lower_bounds = [s for s in requirement.specifier if s.operator == ">="]
+        if len(lower_bounds) != 1:
+            raise ValueError(f"Expected one >= lower bound for {dependency}")
+        current = lower_bounds[0]
+        # A delayed or repeated notification must not downgrade main.
+        if incoming <= Version(current.version):
+            return False
+        remaining = [s for s in requirement.specifier if s != current]
+        constraints = SpecifierSet(",".join(str(s) for s in remaining))
+        if not constraints.contains(incoming, prereleases=True):
+            raise ValueError(
+                f"{dependency} {version} violates existing constraints {constraints}"
+            )
+        requirement.specifier = SpecifierSet(
+            ",".join([f">={version}", *(str(s) for s in remaining)])
+        )
+        requirements[index] = str(requirement)
+        pyproject.write_text(tomlkit.dumps(document), encoding="utf-8")
+        return True
+    raise ValueError(
+        f"Dependency not found in [project].dependencies: {dependency}"
+    )
 
 
 def main() -> None:
-    args = parse_args()
-    update_dependency(args.pyproject, args.dependency, args.version)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("dependency", choices=DEPENDENCIES)
+    parser.add_argument(
+        "version", help="Release version or tag, including prereleases"
+    )
+    parser.add_argument(
+        "--pyproject", type=Path, default=Path("pyproject.toml")
+    )
+    parser.add_argument("--github-output", type=Path)
+    args = parser.parse_args()
+    version = normalize_version(args.version)
+    update_dependency(args.pyproject, args.dependency, version)
+    if args.github_output:
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"dependency={args.dependency}\nversion={version}\n")
 
 
 if __name__ == "__main__":

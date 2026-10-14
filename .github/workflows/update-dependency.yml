@@ -1,4 +1,4 @@
-name: Update dependency pin
+name: Update dependency lower bound
 
 on:
   workflow_dispatch:
@@ -19,12 +19,12 @@ on:
     types: [update-dependency, update-submodule]
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
   update:
-    name: Update dependency pin
+    name: Update dependency lower bound
+    if: github.repository == 'Arm-Debug/executorch-extension-model-explorer'
     runs-on: ubuntu-latest
     steps:
       - uses: getsentry/action-github-app-token@d4b5da6c5e37703f8c3b3e43abb5705b46e159cc # v3.0.0
@@ -37,6 +37,8 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ steps.get_app_token.outputs.token }}
+          ref: main
+          persist-credentials: false
 
       - name: Configure git
         run: |
@@ -48,7 +50,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Resolve request
+      - name: Install dependency update tools
+        run: python -m pip install "packaging>=24.0" "tomlkit>=0.13,<1"
+
+      - name: Resolve request and update dependency
         id: request
         env:
           DISPATCH_DEPENDENCY: ${{ github.event.client_payload.dependency }}
@@ -64,48 +69,20 @@ jobs:
           dependency="${INPUT_DEPENDENCY:-${DISPATCH_DEPENDENCY:-${DISPATCH_SUBMODULE:-$DISPATCH_NAME}}}"
           version="${INPUT_VERSION:-${DISPATCH_VERSION:-${DISPATCH_REF:-$DISPATCH_TAG}}}"
 
-          case "$dependency" in
-            pte-adapter-model-explorer|etrecord-adapter-model-explorer|etdump-data-provider-model-explorer)
-              ;;
-            *)
-              echo "Unsupported dependency: $dependency"
-              exit 2
-              ;;
-          esac
-
-          if [[ -z "$version" ]]; then
-            echo "Missing version"
-            exit 2
-          fi
-
-          version="${version#refs/tags/}"
-          version="${version#v}"
-
-          echo "dependency=$dependency" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "branch_ref=$(printf '%s' "$version" | tr -c '[:alnum:]._-' '-')" >> "$GITHUB_OUTPUT"
-
-      - name: Update dependency pin
-        run: |
-          python scripts/update-dependency-pin.py \
-            "${{ steps.request.outputs.dependency }}" \
-            "${{ steps.request.outputs.version }}"
-
-      - name: Run umbrella tests
-        env:
-          PIP_INDEX_URL: ${{ secrets.INTERNAL_PYPI_AUTH_INDEX_URL || 'https://pypi.org/simple' }}
-        run: |
-          scripts/install-editable.sh
-          python -m pytest -q
+          python scripts/update-dependency-pin.py "$dependency" "$version" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Create pull request
         uses: peter-evans/create-pull-request@67ccf7814544e30c1fbcb3869178934549995817 # v6.1.0
         with:
           token: ${{ steps.get_app_token.outputs.token }}
-          branch: update/${{ steps.request.outputs.dependency }}-${{ steps.request.outputs.branch_ref }}
-          commit-message: Update ${{ steps.request.outputs.dependency }} to ${{ steps.request.outputs.version }}
-          title: Update ${{ steps.request.outputs.dependency }} to ${{ steps.request.outputs.version }}
+          branch: update/${{ steps.request.outputs.dependency }}-${{ steps.request.outputs.version }}
+          commit-message: "fix(deps): update ${{ steps.request.outputs.dependency }} to ${{ steps.request.outputs.version }}"
+          title: "fix(deps): update ${{ steps.request.outputs.dependency }} to ${{ steps.request.outputs.version }}"
+          base: main
+          add-paths: pyproject.toml
           body: |
             Updates `${{ steps.request.outputs.dependency }}` to `${{ steps.request.outputs.version }}`.
 
-            This updates the umbrella package dependency pin in `pyproject.toml`.
+            This raises the dependency lower bound in `pyproject.toml` without dropping other constraints.
+            Review the normal PR compatibility checks before merging. This does not tag or publish the umbrella.

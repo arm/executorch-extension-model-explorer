@@ -31,9 +31,13 @@ profiling data in one package:
 - Python >=3.10, <3.13
 - Model Explorer, provided by `ai-edge-model-explorer`
 - ExecuTorch Python packages for ETRecord and ETDump workflows
-- PTE delegate support packages declared by this project:
+- PTE delegate support packages installed through the PTE adapter:
   `vgf-adapter-model-explorer`, `tosa-adapter-model-explorer`, and
   `flatbuffers`
+
+The umbrella depends directly on PTE, ETRecord and ETDump only. Those packages
+declare and install their own Model Explorer, ExecuTorch and delegate
+requirements; the umbrella does not duplicate those version constraints.
 
 ## Installation
 
@@ -121,32 +125,38 @@ Pull requests and pushes to `main` run the aggregate CI workflow. It
 installs this package in editable mode, then runs Ruff, Pyright, and the
 aggregate pytest suite. The workflow also builds a wheel after tests pass.
 
-Pushes to `main` publish an internal development build to the configured
-internal PyPI/Artifactory repository. Release tags matching `v*.*.*` publish to
-public PyPI and create a GitHub release.
+Internal pushes to `main` publish development builds to Artifactory. Internal
+release tags publish release builds there for testing. Tags are not
+automatically copied to the public repository.
 
 Use the `Trigger Release` workflow to cut a release from the private repository.
 It calculates the next version with git-cliff, updates `pyproject.toml`, pushes
-the version bump commit, and pushes the release tag. The tag push then triggers
-the publish path.
+the version bump commit, and pushes the internal release tag. After testing,
+run `Sync release tag to public repo` with that tag. The public tag triggers
+PyPI publication and a GitHub release. Main commits still sync automatically.
 
 ### Dependency update policy
 
-This repository pins the three adapter/provider packages in `pyproject.toml`.
-By default, update those dependency versions only when a leaf package is
-released, not after every merge to a leaf repository.
+This repository declares adapter/provider minimum versions in `pyproject.toml`.
+PTE, ETRecord and ETDump notify it after successful internal tagged releases to
+Artifactory, not after main development builds or public releases.
 
-Use the helper script for local dependency pin updates:
+After installing the development dependencies, use the helper script for local
+dependency lower-bound updates:
 
 ```bash
 python scripts/update-dependency-pin.py etrecord-adapter-model-explorer v0.2.0
 ```
 
-The same update can be automated through the `Update dependency pin` workflow.
+The same update can be automated through the `Update dependency lower bound` workflow.
 Leaf release workflows can trigger it with a `repository_dispatch` event named
 `update-dependency` and a payload containing `dependency` or `name`, plus
 `version` or `tag`. The workflow also accepts the old `update-submodule`
 dispatch name for compatibility, but it now updates `pyproject.toml`.
+Stable versions and package prereleases such as `v0.5.1rc1` are accepted.
+Updates preserve other constraints
+and never lower an existing minimum. Each update opens a PR for normal CI and
+review; it does not merge or publish the umbrella automatically.
 
 ## Trademark Notice
 

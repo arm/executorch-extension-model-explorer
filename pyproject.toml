@@ -25,23 +25,22 @@ classifiers = [
 ]
 
 dependencies = [
-  "ai-edge-model-explorer>=0.1.28,<0.2.0",
-  "executorch>=1.2.0",
   "pte-adapter-model-explorer>=0.1.2",
   "etrecord-adapter-model-explorer>=0.1.0",
   "etdump-data-provider-model-explorer>=0.1.0",
-  "vgf-adapter-model-explorer>=0.4.1",
-  "tosa-adapter-model-explorer>=0.1.0",
-  "flatbuffers>25.9",
 ]
 
 [dependency-groups]
 dev = [
+  "packaging>=24.0",
+  "tomlkit>=0.13,<1",
   "pytest==9.0.1",
   "pytest-timeout==2.4.0",
   "ruff==0.14.2",
   "pyright==1.1.407",
   "ai-edge-model-explorer==0.1.32",
+  "torch==2.14.0+cpu; sys_platform != 'darwin'",
+  "torch==2.14.0; sys_platform == 'darwin'",
 ]
 coverage = [
   "pytest-cov==7.0.0",
@@ -77,6 +76,7 @@ pythonpath = [
 ]
 testpaths = [
   "tests/shared",
+  "tests/release",
 ]
 
 [tool.ruff]
