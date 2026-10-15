@@ -5,13 +5,14 @@
 """Raise an adapter dependency lower bound without discarding other constraints."""
 
 import argparse
+import re
 from pathlib import Path
 
 import tomlkit
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
 DEPENDENCIES = (
     "pte-adapter-model-explorer",
@@ -22,17 +23,11 @@ DEPENDENCIES = (
 
 def normalize_version(version: str) -> str:
     version = version.strip().removeprefix("refs/tags/").removeprefix("v")
-    try:
-        parsed = Version(version)
-    except InvalidVersion as exc:
+    if not re.fullmatch(r"[0-9]+[.][0-9]+[.][0-9]+", version):
         raise ValueError(
-            "Expected a package version such as v0.1.2 or v0.1.2rc1"
-        ) from exc
-    if len(parsed.release) != 3 or parsed.local is not None or parsed.epoch:
-        raise ValueError(
-            "Expected a package version without a local suffix or epoch"
+            "Expected a clean release version such as v0.1.2, without suffixes"
         )
-    return str(parsed)
+    return str(Version(version))
 
 
 def update_dependency(pyproject: Path, dependency: str, version: str) -> bool:
@@ -74,7 +69,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dependency", choices=DEPENDENCIES)
     parser.add_argument(
-        "version", help="Release version or tag, including prereleases"
+        "version", help="Clean release version or tag, such as v0.1.2"
     )
     parser.add_argument(
         "--pyproject", type=Path, default=Path("pyproject.toml")

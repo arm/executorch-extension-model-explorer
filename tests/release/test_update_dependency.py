@@ -84,7 +84,9 @@ def test_update_preserves_other_constraints(tmp_path, dependency):
     _ASSERT.assertIn("# retained comment", contents)
 
 
-@pytest.mark.parametrize("version", ["0.5.1", "v0.5.1", "refs/tags/v0.5.1"])
+@pytest.mark.parametrize(
+    "version", ["0.5.1", "v0.5.1", "refs/tags/v0.5.1", "v00.5.1"]
+)
 def test_normalize_version(version):
     _ASSERT.assertEqual(updater.normalize_version(version), "0.5.1")
 
@@ -97,6 +99,11 @@ def test_normalize_version(version):
         "v1.2",
         "1!1.2.3",
         "v1.2.3+local",
+        "v0.5.1rc1",
+        "v0.5.1-pre-release",
+        "refs/tags/v0.5.1.dev2",
+        "v0.5.1.post1",
+        "v0.5.1.0",
         '1.2.3"; echo bad',
         "1.2.3\nbranch=main",
     ],
@@ -107,7 +114,7 @@ def test_invalid_versions_do_not_modify_files(tmp_path, version):
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.4.1"]\n'
     )
     project.write_text(content)
-    with pytest.raises(ValueError, match="Expected a package version"):
+    with pytest.raises(ValueError, match="Expected a clean release version"):
         updater.update_dependency(
             project, "pte-adapter-model-explorer", version
         )
@@ -129,44 +136,16 @@ def test_repeated_or_older_release_is_noop(tmp_path, version):
     _ASSERT.assertEqual(project.read_text(), content)
 
 
-@pytest.mark.parametrize(
-    ("tag", "version"),
-    [
-        ("v0.5.1rc1", "0.5.1rc1"),
-        ("refs/tags/v0.5.1.dev2", "0.5.1.dev2"),
-        ("v0.5.1.post1", "0.5.1.post1"),
-        ("v00.5.1", "0.5.1"),
-    ],
-)
-def test_internal_versions_update_lower_bound(tmp_path, tag, version):
-    project = tmp_path / "pyproject.toml"
-    project.write_text(
-        '[project]\ndependencies = ["pte-adapter-model-explorer>=0.4.1,<0.6.0"]\n'
-    )
-    _ASSERT.assertEqual(updater.normalize_version(tag), version)
-    _ASSERT.assertTrue(
-        updater.update_dependency(project, "pte-adapter-model-explorer", tag)
-    )
-    requirement = Requirement(
-        tomlkit.parse(project.read_text())["project"]["dependencies"][0]
-    )
-    _ASSERT.assertEqual(
-        requirement.specifier,
-        Requirement(f"pte-adapter-model-explorer>={version},<0.6.0").specifier,
-    )
-
-
 def test_prerelease_cannot_downgrade_stable_release(tmp_path):
     project = tmp_path / "pyproject.toml"
     content = (
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.5.1"]\n'
     )
     project.write_text(content)
-    _ASSERT.assertFalse(
+    with pytest.raises(ValueError, match="Expected a clean release version"):
         updater.update_dependency(
             project, "pte-adapter-model-explorer", "v0.5.1rc1"
         )
-    )
     _ASSERT.assertEqual(project.read_text(), content)
 
 
