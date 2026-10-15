@@ -25,7 +25,7 @@ classifiers = [
 ]
 
 dependencies = [
-  "pte-adapter-model-explorer>=0.1.2",
+  "pte-adapter-model-explorer>=0.2.0",
   "etrecord-adapter-model-explorer>=0.1.0",
   "etdump-data-provider-model-explorer>=0.1.0",
 ]
