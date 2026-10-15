@@ -5,13 +5,16 @@ import os
 import queue
 import shutil
 import socket
-import subprocess
+import subprocess  # nosec B404: exercise the installed CLI without a shell.
 import sys
 import threading
 import time
+import unittest
 from pathlib import Path
 
 import pytest
+
+_ASSERT = unittest.TestCase()
 
 
 @pytest.mark.timeout(30)
@@ -63,7 +66,7 @@ def test_model_explorer_smoke(
         + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])
     )
 
-    proc = subprocess.Popen(
+    proc = subprocess.Popen(  # nosec B603: trusted CLI path and parametrized test arguments.
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -77,11 +80,13 @@ def test_model_explorer_smoke(
     output_lines: list[str] = []
     deadline = time.monotonic() + 20
 
-    assert proc.stdout is not None, "Process stdout not captured"
+    if proc.stdout is None:
+        raise AssertionError("Process stdout not captured")
     line_queue: queue.Queue[str] = queue.Queue()
 
     def read_output() -> None:
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise AssertionError("Process stdout not captured")
         for line in proc.stdout:
             line_queue.put(line)
 
@@ -109,9 +114,9 @@ def test_model_explorer_smoke(
             proc.kill()
             proc.wait(timeout=2)
 
-    assert all(seen_lines.values()), (
-        f"Not all expected lines were seen: {seen_lines}\n"
-        f"Output:\n{''.join(output_lines)}"
+    _ASSERT.assertTrue(
+        all(seen_lines.values()),
+        msg=f"Not all expected lines were seen: {seen_lines}\nOutput:\n{''.join(output_lines)}",
     )
 
 

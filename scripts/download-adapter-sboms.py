@@ -12,7 +12,8 @@ import re
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ADAPTER_REPOSITORIES = {
     "pte-adapter-model-explorer": "arm/pte-adapter-model-explorer",
@@ -23,6 +24,45 @@ ADAPTER_REPOSITORIES = {
 }
 
 SBOM_ASSET_SUFFIXES = (".spdx.json", ".cdx.json")
+GITHUB_DOWNLOAD_HOSTS = {
+    "api.github.com",
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+}
+
+
+def validate_github_url(url: str) -> str:
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or parsed.hostname not in GITHUB_DOWNLOAD_HOSTS
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.port not in (None, 443)
+    ):
+        raise ValueError("SBOM downloads require a trusted GitHub HTTPS URL")
+    return url
+
+
+class GitHubRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_github_url(newurl)
+        redirected = super().redirect_request(
+            req, fp, code, msg, headers, newurl
+        )
+        if redirected is not None and (
+            urlsplit(req.full_url).hostname != urlsplit(newurl).hostname
+        ):
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def github_request(url: str, token: str | None, headers: dict[str, str]):
+    validate_github_url(url)
+    if token and urlsplit(url).hostname in {"api.github.com", "github.com"}:
+        headers = {**headers, "Authorization": f"Bearer {token}"}
+    return Request(url, headers=headers)
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,21 +129,19 @@ def github_json(url: str, token: str | None) -> object:
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=30) as response:
+    request = github_request(url, token, headers)
+    with build_opener(GitHubRedirectHandler()).open(
+        request, timeout=30
+    ) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
 def download_file(url: str, output: Path, token: str | None) -> None:
     headers = {"Accept": "application/octet-stream"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    request = Request(url, headers=headers)
-    with urlopen(request, timeout=60) as response:
+    request = github_request(url, token, headers)
+    with build_opener(GitHubRedirectHandler()).open(
+        request, timeout=60
+    ) as response:
         output.write_bytes(response.read())
 
 
@@ -148,6 +186,14 @@ def download_adapter_sboms(
         package_output_dir.mkdir(parents=True, exist_ok=True)
         for asset in sbom_assets:
             asset_name = str(asset["name"])
+            if (
+                "/" in asset_name
+                or "\\" in asset_name
+                or ":" in asset_name
+                or "\x00" in asset_name
+                or asset_name in {".", ".."}
+            ):
+                raise ValueError("SBOM asset name must be a plain filename")
             browser_download_url = str(asset["browser_download_url"])
             output = package_output_dir / asset_name
             download_file(browser_download_url, output, token)
@@ -168,7 +214,7 @@ def main() -> None:
             args.output_dir,
             args.github_token,
         )
-    except (HTTPError, URLError, RuntimeError) as exc:
+    except (HTTPError, URLError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
 

@@ -3,13 +3,16 @@
 """Release notifications only raise the intended dependency lower bound."""
 
 import importlib.util
-import subprocess
+import subprocess  # nosec B404: exercise the repository script without a shell.
 import sys
+import unittest
 from pathlib import Path
 
 import pytest
 import tomlkit
 from packaging.requirements import Requirement
+
+_ASSERT = unittest.TestCase()
 
 SCRIPT = (
     Path(__file__).resolve().parents[2] / "scripts/update-dependency-pin.py"
@@ -27,12 +30,15 @@ def test_umbrella_only_declares_its_direct_plugins():
         Requirement(value).name
         for value in document["project"]["dependencies"]
     }
-    assert names == {
-        "pte-adapter-model-explorer",
-        "etrecord-adapter-model-explorer",
-        "etdump-data-provider-model-explorer",
-    }
-    assert set(updater.DEPENDENCIES) == names
+    _ASSERT.assertEqual(
+        names,
+        {
+            "pte-adapter-model-explorer",
+            "etrecord-adapter-model-explorer",
+            "etdump-data-provider-model-explorer",
+        },
+    )
+    _ASSERT.assertEqual(set(updater.DEPENDENCIES), names)
 
 
 @pytest.mark.parametrize(
@@ -51,7 +57,7 @@ def test_rejects_transitive_dependency_updates(tmp_path, dependency):
     project.write_text(content)
     with pytest.raises(ValueError, match="Unsupported dependency"):
         updater.update_dependency(project, dependency, "v0.5.1")
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 @pytest.mark.parametrize("dependency", updater.DEPENDENCIES)
@@ -62,23 +68,25 @@ def test_update_preserves_other_constraints(tmp_path, dependency):
         f'dependencies = ["{dependency}>=0.1.0,<0.6.0", "other==1.0"]\n'
         '# retained comment\n[dependency-groups]\ndev = ["pytest"]\n'
     )
-    assert updater.update_dependency(project, dependency, "refs/tags/v0.5.1")
+    _ASSERT.assertTrue(
+        updater.update_dependency(project, dependency, "refs/tags/v0.5.1")
+    )
     contents = project.read_text()
     document = tomlkit.parse(contents)
     requirements = document["project"]["dependencies"]
-    assert (
-        Requirement(requirements[0]).specifier
-        == Requirement(f"{dependency}>=0.5.1,<0.6.0").specifier
+    _ASSERT.assertEqual(
+        Requirement(requirements[0]).specifier,
+        Requirement(f"{dependency}>=0.5.1,<0.6.0").specifier,
     )
-    assert requirements[1] == "other==1.0"
-    assert document["project"]["version"] == "0.1.0"
-    assert document["dependency-groups"]["dev"] == ["pytest"]
-    assert "# retained comment" in contents
+    _ASSERT.assertEqual(requirements[1], "other==1.0")
+    _ASSERT.assertEqual(document["project"]["version"], "0.1.0")
+    _ASSERT.assertEqual(document["dependency-groups"]["dev"], ["pytest"])
+    _ASSERT.assertIn("# retained comment", contents)
 
 
 @pytest.mark.parametrize("version", ["0.5.1", "v0.5.1", "refs/tags/v0.5.1"])
 def test_normalize_version(version):
-    assert updater.normalize_version(version) == "0.5.1"
+    _ASSERT.assertEqual(updater.normalize_version(version), "0.5.1")
 
 
 @pytest.mark.parametrize(
@@ -103,7 +111,7 @@ def test_invalid_versions_do_not_modify_files(tmp_path, version):
         updater.update_dependency(
             project, "pte-adapter-model-explorer", version
         )
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 @pytest.mark.parametrize("version", ["0.4.1", "0.5.0"])
@@ -113,10 +121,12 @@ def test_repeated_or_older_release_is_noop(tmp_path, version):
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.5.0"]\n'
     )
     project.write_text(content)
-    assert not updater.update_dependency(
-        project, "pte-adapter-model-explorer", version
+    _ASSERT.assertFalse(
+        updater.update_dependency(
+            project, "pte-adapter-model-explorer", version
+        )
     )
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 @pytest.mark.parametrize(
@@ -133,18 +143,16 @@ def test_internal_versions_update_lower_bound(tmp_path, tag, version):
     project.write_text(
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.4.1,<0.6.0"]\n'
     )
-    assert updater.normalize_version(tag) == version
-    assert updater.update_dependency(
-        project, "pte-adapter-model-explorer", tag
+    _ASSERT.assertEqual(updater.normalize_version(tag), version)
+    _ASSERT.assertTrue(
+        updater.update_dependency(project, "pte-adapter-model-explorer", tag)
     )
     requirement = Requirement(
         tomlkit.parse(project.read_text())["project"]["dependencies"][0]
     )
-    assert (
-        requirement.specifier
-        == Requirement(
-            f"pte-adapter-model-explorer>={version},<0.6.0"
-        ).specifier
+    _ASSERT.assertEqual(
+        requirement.specifier,
+        Requirement(f"pte-adapter-model-explorer>={version},<0.6.0").specifier,
     )
 
 
@@ -154,10 +162,12 @@ def test_prerelease_cannot_downgrade_stable_release(tmp_path):
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.5.1"]\n'
     )
     project.write_text(content)
-    assert not updater.update_dependency(
-        project, "pte-adapter-model-explorer", "v0.5.1rc1"
+    _ASSERT.assertFalse(
+        updater.update_dependency(
+            project, "pte-adapter-model-explorer", "v0.5.1rc1"
+        )
     )
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 @pytest.mark.parametrize("constraint", [">=0.4.1,<0.5.0", ">=0.4.1,!=0.5.0"])
@@ -169,7 +179,7 @@ def test_rejects_incompatible_release(tmp_path, constraint):
         updater.update_dependency(
             project, "pte-adapter-model-explorer", "0.5.0"
         )
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 def test_missing_or_unsupported_dependency(tmp_path):
@@ -182,7 +192,7 @@ def test_missing_or_unsupported_dependency(tmp_path):
         )
     with pytest.raises(ValueError, match="Unsupported"):
         updater.update_dependency(project, "other", "0.5.0")
-    assert project.read_text() == content
+    _ASSERT.assertEqual(project.read_text(), content)
 
 
 def test_cli_outputs_are_normalized(tmp_path):
@@ -191,7 +201,7 @@ def test_cli_outputs_are_normalized(tmp_path):
         '[project]\ndependencies = ["pte-adapter-model-explorer>=0.4.1"]\n'
     )
     output = tmp_path / "github-output"
-    subprocess.run(
+    subprocess.run(  # nosec B603: current Python, repository script and test-owned arguments.
         [
             sys.executable,
             str(SCRIPT),
@@ -204,7 +214,7 @@ def test_cli_outputs_are_normalized(tmp_path):
         ],
         check=True,
     )
-    assert (
-        output.read_text()
-        == "dependency=pte-adapter-model-explorer\nversion=0.5.1\n"
+    _ASSERT.assertEqual(
+        output.read_text(),
+        "dependency=pte-adapter-model-explorer\nversion=0.5.1\n",
     )
