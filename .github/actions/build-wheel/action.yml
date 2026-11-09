@@ -4,9 +4,6 @@ description: Build the ExecuTorch extension Model Explorer package
 inputs:
   python-version:
     required: true
-  internal-dev-version:
-    required: false
-    default: "false"
 
 runs:
   using: "composite"
@@ -15,16 +12,6 @@ runs:
       uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
       with:
         python-version: ${{ inputs.python-version }}
-
-    - name: Set internal development version
-      if: inputs.internal-dev-version == 'true'
-      shell: bash
-      run: |
-        BASE_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' pyproject.toml | head -n 1)
-        SHORT_SHA="${GITHUB_SHA::7}"
-        DEV_VERSION="${BASE_VERSION}.dev${GITHUB_RUN_NUMBER}+${SHORT_SHA}"
-        echo "Building internal development version ${DEV_VERSION} from ${GITHUB_SHA}"
-        sed -i "s/^version = \".*\"$/version = \"${DEV_VERSION}\"/" pyproject.toml
 
     - name: Build package
       shell: bash
